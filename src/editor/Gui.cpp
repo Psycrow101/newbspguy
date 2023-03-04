@@ -2043,6 +2043,61 @@ void Gui::drawMenuBar()
 				ImGui::EndMenu();
 			}
 
+            if ((map && !map->is_mdl_model) && ImGui::MenuItem("Wallguard config (.ini)", NULL)) {
+                std::string wallguardFilePath = GetWorkDir() + (map->bsp_name + ".ini");
+                createDir(GetWorkDir());
+
+                logf("Export wallguard config: {}\n", wallguardFilePath);
+                std::ofstream wallguardFile(wallguardFilePath, std::ios::trunc);
+                map->update_ent_lump();
+                for (auto ent : map->ents) {
+                    if (!ent->hasKey("wallguard") || !ent->hasKey("model"))
+                        continue;
+
+                    auto modelName = ent->keyvalues["model"];
+                    if (modelName[0] != '*')
+                        continue;
+
+                    auto modelIdx = atoi(modelName.substr(1, modelName.length()).c_str());
+                    auto model = &map->models[modelIdx];
+                    auto origin = splitString(ent->keyvalues["origin"], " ");
+
+                    auto minVert = vec3(8192, 8192, 8192);
+                    auto maxVert = vec3(-8192, -8192, -8192);
+
+                    for (int f = 0; f < model->nFaces; f++)
+                    {
+                        auto face = &map->faces[model->iFirstFace + f];
+                        for (int e = 0; e < face->nEdges; e++)
+                        {
+                            auto surfedge = map->surfedges[face->iFirstEdge + e];
+                            auto v = surfedge > 0 ?
+                                     map->edges[surfedge].iVertex[0] : map->edges[-surfedge].iVertex[1];
+                            auto vert = map->verts[v];
+
+                            if (vert.x > maxVert.x) maxVert.x = vert.x;
+                            if (vert.y > maxVert.y) maxVert.y = vert.y;
+                            if (vert.z > maxVert.z) maxVert.z = vert.z;
+                            if (vert.x < minVert.x) minVert.x = vert.x;
+                            if (vert.y < minVert.y) minVert.y = vert.y;
+                            if (vert.z < minVert.z) minVert.z = vert.z;
+                        }
+                    }
+
+                    wallguardFile << origin[0];
+                    wallguardFile << " " << origin[1];
+                    wallguardFile << " " << origin[2];
+                    wallguardFile << " 0 0 0";
+                    wallguardFile << " " << minVert.x;
+                    wallguardFile << " " << minVert.y;
+                    wallguardFile << " " << minVert.z;
+                    wallguardFile << " " << maxVert.x;
+                    wallguardFile << " " << maxVert.y;
+                    wallguardFile << " " << maxVert.z;
+                    wallguardFile << " 1" << std::endl;
+                }
+            }
+
 			ImGui::EndMenu();
 		}
 		if ((map && !map->is_mdl_model) && ImGui::BeginMenu("Import", !app->isLoading))
@@ -2232,6 +2287,67 @@ void Gui::drawMenuBar()
 				}
 				ImGui::EndMenu();
 			}
+
+            if (ImGui::MenuItem("Wallguard config (.ini)", NULL)) {
+                std::string wallguardFilePath = GetWorkDir() + (map->bsp_name + ".ini");
+
+                logf("Import wallguard config from: {}\n", wallguardFilePath);
+                if (fileExists(wallguardFilePath))
+                {
+                    CreateSeveralBspModelCommand* command = new CreateSeveralBspModelCommand("Load wallguard config", app->getSelectedMapId());
+                    std::vector<Entity*> newEnts;
+
+                    std::ifstream t(wallguardFilePath);
+                    std::string line;
+                    while (std::getline(t, line))
+                    {
+                        if (line.empty())
+                            continue;
+
+                        std::vector<std::string> args;
+                        size_t argsNum = splitInArgs(line, args, 12);
+
+                        if (argsNum < 12)
+                            continue;
+
+                        vec3 origin = vec3(std::stof(args[0]), std::stof(args[1]), std::stof(args[2]));
+                        vec3 mins = vec3(std::stof(args[6]), std::stof(args[7]), std::stof(args[8]));
+                        vec3 maxs = vec3(std::stof(args[9]), std::stof(args[10]), std::stof(args[11]));
+
+                        Entity* newEnt = new Entity();
+                        newEnt->addKeyvalue("origin", origin.toKeyvalueString());
+                        newEnt->addKeyvalue("classname", "func_wall");
+                        newEnt->addKeyvalue("wallguard", "1");
+
+                        command->addEnt(newEnt, mins, maxs, false);
+                        newEnts.push_back(newEnt);
+                    }
+
+                    command->setDefaultTextureName("wallguard");
+                    command->execute();
+                    for (int i = 0; i < command->entNum; i++)
+                        delete newEnts[i];
+
+                    rend->pushUndoCommand(command);
+
+                    for (int i = 0; i < command->entNum; i++)
+                    {
+                        Entity* newEnt = map->ents[map->ents.size() - 1 - i];
+                        if (newEnt && newEnt->getBspModelIdx() >= 0)
+                        {
+                            BSPMODEL& model = map->models[newEnt->getBspModelIdx()];
+                            for (int j = 0; j < model.nFaces; j++)
+                            {
+                                map->faces[model.iFirstFace + j].nStyles[0] = 0;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    logf("Error! No file!\n");
+                }
+            }
 
 			ImGui::EndMenu();
 		}
@@ -2844,6 +2960,41 @@ void Gui::drawMenuBar()
 				}
 			}
 		}
+
+        if (ImGui::MenuItem("BSP Solid Model (Wallguard)", 0, false, !app->isLoading && map))
+        {
+            vec3 origin = cameraOrigin + app->cameraForward * 100;
+            if (app->gridSnappingEnabled)
+                origin = app->snapToGrid(origin);
+
+            Entity* newEnt = new Entity();
+            newEnt->addKeyvalue("origin", origin.toKeyvalueString());
+            newEnt->addKeyvalue("classname", "func_wall");
+            newEnt->addKeyvalue("wallguard", "1");
+
+            float snapSize = pow(2.0f, app->gridSnapLevel * 1.0f);
+            if (snapSize < 16)
+            {
+                snapSize = 16;
+            }
+
+            CreateBspModelCommand* command = new CreateBspModelCommand("Create Model", app->getSelectedMapId(), newEnt, snapSize, false);
+            command->setDefaultTextureName("wallguard");
+            command->execute();
+            delete newEnt;
+            rend->pushUndoCommand(command);
+
+            newEnt = map->ents[map->ents.size() - 1];
+            if (newEnt && newEnt->getBspModelIdx() >= 0)
+            {
+                BSPMODEL& model = map->models[newEnt->getBspModelIdx()];
+                for (int i = 0; i < model.nFaces; i++)
+                {
+                    map->faces[model.iFirstFace + i].nStyles[0] = 0;
+                }
+            }
+        }
+
 		ImGui::EndMenu();
 	}
 

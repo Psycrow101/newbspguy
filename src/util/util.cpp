@@ -186,6 +186,55 @@ std::vector<std::string> splitStringIgnoringQuotes(std::string s, const std::str
 	return split;
 }
 
+size_t splitInArgs(const std::string& str, std::vector<std::string>& args, size_t maxArgs)
+{
+    size_t argsNum = 0;
+    size_t len = str.length();
+    bool qot = false, sqot = false;
+    int argLen;
+
+    for (int i = 0; i < len; i++)
+    {
+        int start = i;
+        if (str[i] == '\"')
+            qot = true;
+        else if(str[i] == '\'')
+            sqot = true;
+
+        if (qot)
+        {
+            i++;
+            start++;
+            while (i < len && str[i] != '\"')
+                i++;
+            if (i < len)
+                qot = false;
+            argLen = i - start;
+            i++;
+        }
+        else if(sqot)
+        {
+            i++;
+            while (i < len && str[i] != '\'')
+                i++;
+            if (i < len)
+                sqot = false;
+            argLen = i - start;
+            i++;
+        }
+        else
+        {
+            while(i < len && str[i] != ' ')
+                i++;
+            argLen = i - start;
+        }
+        args.push_back(str.substr(start, argLen));
+        if (++argsNum >= maxArgs)
+            return argsNum;
+    }
+    return argsNum;
+}
+
 
 std::string basename(const std::string& path)
 {

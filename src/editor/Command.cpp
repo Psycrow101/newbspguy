@@ -3,6 +3,7 @@
 #include "Gui.h"
 #include <lodepng.h>
 #include "icons/aaatrigger.h"
+#include "icons/wallguard.h"
 #include "Settings.h"
 
 
@@ -355,6 +356,7 @@ CreateBspModelCommand::CreateBspModelCommand(std::string desc, int mapIdx, Entit
 	this->mdl_size = size;
 	this->initialized = false;
 	this->empty = empty;
+    this->defaultTextureName = "aaatrigger";
 	memset(&oldLumps, 0, sizeof(LumpState));
 }
 
@@ -370,6 +372,11 @@ CreateBspModelCommand::~CreateBspModelCommand()
 		delete entData;
 		entData = NULL;
 	}
+}
+
+void CreateBspModelCommand::setDefaultTextureName(std::string textureName)
+{
+    defaultTextureName = std::move(textureName);
 }
 
 void CreateBspModelCommand::execute()
@@ -485,7 +492,7 @@ int CreateBspModelCommand::getDefaultTextureIdx()
 		if (texOffset >= 0)
 		{
 			BSPMIPTEX& tex = *((BSPMIPTEX*)(map->textures + texOffset));
-			if (tex.szName[0] != '\0' && strcasecmp(tex.szName, "aaatrigger") == 0)
+			if (tex.szName[0] != '\0' && strcasecmp(tex.szName, defaultTextureName.c_str()) == 0)
 			{
 				logf("Found default texture in map file.\n");
 				return i;
@@ -504,13 +511,209 @@ int CreateBspModelCommand::addDefaultTexture()
 	unsigned char* tex_dat = NULL;
 	unsigned int w, h;
 
-	lodepng_decode24(&tex_dat, &w, &h, aaatrigger_dat, sizeof(aaatrigger_dat));
+    if (defaultTextureName == "wallguard")
+        lodepng_decode24(&tex_dat, &w, &h, wallguard_dat, sizeof(wallguard_dat));
+    else
+	    lodepng_decode24(&tex_dat, &w, &h, aaatrigger_dat, sizeof(aaatrigger_dat));
 
-	int aaatriggerIdx = map->add_texture("aaatrigger", tex_dat, w, h);
+	int aaatriggerIdx = map->add_texture(defaultTextureName.c_str(), tex_dat, w, h);
 
 	delete[] tex_dat;
 
 	return aaatriggerIdx;
+}
+
+
+//
+// Create several BSP models
+//
+CreateSeveralBspModelCommand::CreateSeveralBspModelCommand(std::string desc, int mapIdx) : Command(desc, mapIdx)
+{
+    this->entNum = 0;
+    this->initialized = false;
+    this->defaultTextureName = "aaatrigger";
+    memset(&oldLumps, 0, sizeof(LumpState));
+}
+
+CreateSeveralBspModelCommand::~CreateSeveralBspModelCommand()
+{
+    for (int i = 0; i < HEADER_LUMPS; i++)
+    {
+        if (oldLumps.lumps[i])
+            delete[] oldLumps.lumps[i];
+    }
+
+    for (int i = 0; i < entNum; i++)
+        delete entData[i];
+
+    entData.clear();
+    mins.clear();
+    maxs.clear();
+    empties.clear();
+
+    entNum = 0;
+}
+
+void CreateSeveralBspModelCommand::setDefaultTextureName(std::string textureName)
+{
+    defaultTextureName = std::move(textureName);
+}
+
+void CreateSeveralBspModelCommand::addEnt(Entity* entData, vec3 mins, vec3 maxs, bool empty) {
+    Entity* entLocalData = new Entity();
+    *entLocalData = *entData;
+
+    this->entData.push_back(entLocalData);
+    this->mins.push_back(mins);
+    this->maxs.push_back(maxs);
+    this->empties.push_back(empty);
+    this->entNum++;
+}
+
+void CreateSeveralBspModelCommand::execute()
+{
+    Bsp* map = getBsp();
+    if (!map)
+        return;
+    BspRenderer* renderer = getBspRenderer();
+    if (!renderer)
+        return;
+    //renderer->addNewRenderFace();
+    int aaatriggerIdx = getDefaultTextureIdx();
+
+    if (!initialized)
+    {
+        int dupLumps = CLIPNODES | EDGES | FACES | NODES | PLANES | SURFEDGES | TEXINFO | VERTICES | LIGHTING | MODELS;
+        if (aaatriggerIdx == -1)
+        {
+            dupLumps |= TEXTURES;
+        }
+        oldLumps = map->duplicate_lumps(dupLumps);
+    }
+
+    bool NeedreloadTextures = false;
+    // add the aaatrigger texture if it doesn't already exist
+    if (aaatriggerIdx == -1)
+    {
+        NeedreloadTextures = true;
+        aaatriggerIdx = addDefaultTexture();
+    }
+
+    for (int i = 0; i < entNum; i++) {
+        int modelIdx = map->create_solid(mins[i], maxs[i], aaatriggerIdx, empties[i]);
+        if (!initialized)
+        {
+            entData[i]->addKeyvalue("model", "*" + std::to_string(modelIdx));
+        }
+
+        Entity* newEnt = new Entity();
+        *newEnt = *entData[i];
+        map->ents.push_back(newEnt);
+
+        renderer->addClipnodeModel(modelIdx);
+    }
+
+    g_app->deselectObject();
+
+    //renderer->updateLightmapInfos();
+    //renderer->calcFaceMaths();
+    //renderer->preRenderFaces();
+    //renderer->preRenderEnts();
+    //renderer->reloadTextures();
+    //renderer->reloadLightmaps();
+    //renderer->addClipnodeModel(modelIdx);
+    //renderer->refreshModel(modelIdx);
+    //
+
+    renderer->updateLightmapInfos();
+    renderer->calcFaceMaths();
+    renderer->preRenderFaces();
+    renderer->preRenderEnts();
+    if (NeedreloadTextures)
+        renderer->reloadTextures();
+    renderer->reloadLightmaps();
+    //renderer->reload();
+
+
+    g_app->gui->refresh();
+
+    initialized = true;
+}
+
+void CreateSeveralBspModelCommand::undo()
+{
+    Bsp* map = getBsp();
+    BspRenderer* renderer = getBspRenderer();
+
+    if (!map || !renderer)
+        return;
+
+    map->replace_lumps(oldLumps);
+
+    for (int i = 0; i < entNum; i++) {
+        delete map->ents[map->ents.size() - 1];
+        map->ents.pop_back();
+    }
+
+    renderer->reload();
+    g_app->gui->refresh();
+    g_app->deselectObject();
+}
+
+size_t CreateSeveralBspModelCommand::memoryUsage()
+{
+    int size = sizeof(DuplicateBspModelCommand) * entNum;
+
+    for (int i = 0; i < HEADER_LUMPS; i++)
+    {
+        size += oldLumps.lumpLen[i];
+    }
+
+    return size;
+}
+
+int CreateSeveralBspModelCommand::getDefaultTextureIdx()
+{
+    Bsp* map = getBsp();
+    if (!map)
+        return -1;
+
+    unsigned int totalTextures = ((unsigned int*)map->textures)[0];
+    for (unsigned int i = 0; i < totalTextures; i++)
+    {
+        int texOffset = ((int*)map->textures)[i + 1];
+        if (texOffset >= 0)
+        {
+            BSPMIPTEX& tex = *((BSPMIPTEX*)(map->textures + texOffset));
+            if (tex.szName[0] != '\0' && strcasecmp(tex.szName, defaultTextureName.c_str()) == 0)
+            {
+                logf("Found default texture in map file.\n");
+                return i;
+            }
+        }
+    }
+
+    return -1;
+}
+
+int CreateSeveralBspModelCommand::addDefaultTexture()
+{
+    Bsp* map = getBsp();
+    if (!map)
+        return -1;
+    unsigned char* tex_dat = NULL;
+    unsigned int w, h;
+
+    if (defaultTextureName == "wallguard")
+        lodepng_decode24(&tex_dat, &w, &h, wallguard_dat, sizeof(wallguard_dat));
+    else
+        lodepng_decode24(&tex_dat, &w, &h, aaatrigger_dat, sizeof(aaatrigger_dat));
+
+    int aaatriggerIdx = map->add_texture(defaultTextureName.c_str(), tex_dat, w, h);
+
+    delete[] tex_dat;
+
+    return aaatriggerIdx;
 }
 
 

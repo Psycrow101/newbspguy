@@ -6810,7 +6810,8 @@ void Bsp::ExportToObjWIP(const std::string& path, ExportObjOrder order, int isca
 					toLowerCase(tex.szName) == "origin" ||
 					toLowerCase(tex.szName) == "bevel" ||
 					toLowerCase(tex.szName) == "hint" ||
-					toLowerCase(tex.szName) == "skip"
+					toLowerCase(tex.szName) == "skip" ||
+                    toLowerCase(tex.szName) == "wallguard"
 					)
 				{
 					materials.push_back("illum 4");

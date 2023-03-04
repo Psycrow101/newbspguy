@@ -103,13 +103,46 @@ public:
 	CreateBspModelCommand(std::string desc, int mapIdx, Entity* entData, float size, bool empty);
 	~CreateBspModelCommand();
 
+    void setDefaultTextureName(std::string textureName);
+
 	void execute() override;
 	void undo() override;
 	size_t memoryUsage() override;
 
 private:
+    std::string defaultTextureName;
+
 	int getDefaultTextureIdx();
 	int addDefaultTexture();
+};
+
+
+class CreateSeveralBspModelCommand : public Command
+{
+public:
+    std::vector<Entity*> entData;
+    LumpState oldLumps = LumpState();
+    bool initialized = false;
+    std::vector<vec3> mins;
+    std::vector<vec3> maxs;
+    std::vector<bool> empties;
+    int entNum = 0;
+
+    CreateSeveralBspModelCommand(std::string desc, int mapIdx);
+    ~CreateSeveralBspModelCommand();
+
+    void setDefaultTextureName(std::string textureName);
+    void addEnt(Entity* entData, vec3 mins, vec3 maxs, bool empty);
+
+    void execute() override;
+    void undo() override;
+    size_t memoryUsage() override;
+
+private:
+    std::string defaultTextureName;
+
+    int getDefaultTextureIdx();
+    int addDefaultTexture();
 };
 
 

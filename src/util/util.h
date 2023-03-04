@@ -82,6 +82,8 @@ std::streampos fileSize(const std::string& filePath);
 
 std::vector<std::string> splitStringIgnoringQuotes(std::string s, const std::string& delimitter);
 std::vector<std::string> splitString(std::string s, const std::string& delimitter);
+size_t splitInArgs(const std::string& str, std::vector<std::string>& args, size_t maxArgs);
+
 
 std::string basename(const std::string& path);
 
